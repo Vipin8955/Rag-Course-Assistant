@@ -47,9 +47,9 @@ desktop.ini
 *.ipynb
 
 # ── Environment variables / secrets ──────────────────────────────────────────
+# Keep .env.example (safe template) but ignore the real .env (has local values)
 .env
-.env.*
-*.env
+!.env.example
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log

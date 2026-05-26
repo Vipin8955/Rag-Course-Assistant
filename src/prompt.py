@@ -1,12 +1,18 @@
 """
-prompt.py — Prompt templates for the RAG system
+prompt.py — Prompt templates for the RAG system.
 """
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 NOT_FOUND_MSG = "Answer not found in uploaded documents."
 
-SYSTEM_PROMPT_TEMPLATE = """You are a helpful university course assistant. Your job is to answer student questions STRICTLY based on the provided context from uploaded course documents. 
+_SYSTEM_PROMPT_TEMPLATE = """\
+You are a helpful university course assistant. Your job is to answer student \
+questions STRICTLY based on the provided context from uploaded course documents.
 
 Rules:
 - Answer ONLY from the provided context below
@@ -29,29 +35,49 @@ def build_prompt(question: str, retrieved_chunks: list[dict]) -> str:
     Build the full prompt for the LLM.
 
     Args:
-        question: the student's question
-        retrieved_chunks: list of chunk dicts with 'text' and 'source'
+        question:         The student's question.
+        retrieved_chunks: List of chunk dicts with 'text' and 'source'.
 
     Returns:
-        Formatted prompt string
+        Formatted prompt string.
     """
+    if not isinstance(question, str):
+        logger.warning("build_prompt: question is not a string (%s) — coercing.", type(question))
+        question = str(question)
+
+    question = question.strip() or "No question provided."
+
     if not retrieved_chunks:
-        return SYSTEM_PROMPT_TEMPLATE.format(
+        logger.debug("build_prompt: no chunks provided — using no-context placeholder.")
+        return _SYSTEM_PROMPT_TEMPLATE.format(
             context="[No relevant context found in uploaded documents]",
             question=question,
             not_found=NOT_FOUND_MSG,
         )
 
-    # Format each chunk with source attribution
-    context_parts = []
+    # Build context string from chunks
+    context_parts: list[str] = []
     for i, chunk in enumerate(retrieved_chunks, 1):
+        if not isinstance(chunk, dict):
+            logger.warning("build_prompt: chunk %d is not a dict — skipping.", i)
+            continue
         source = chunk.get("source", "unknown")
         text = chunk.get("text", "").strip()
+        if not text:
+            logger.debug("build_prompt: chunk %d has empty text — skipping.", i)
+            continue
         context_parts.append(f"[Source {i}: {source}]\n{text}")
 
-    context_str = "\n\n---\n\n".join(context_parts)
+    if not context_parts:
+        logger.warning("build_prompt: all chunks were empty — using no-context placeholder.")
+        return _SYSTEM_PROMPT_TEMPLATE.format(
+            context="[No relevant context found in uploaded documents]",
+            question=question,
+            not_found=NOT_FOUND_MSG,
+        )
 
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    context_str = "\n\n---\n\n".join(context_parts)
+    return _SYSTEM_PROMPT_TEMPLATE.format(
         context=context_str,
         question=question,
         not_found=NOT_FOUND_MSG,
@@ -59,9 +85,25 @@ def build_prompt(question: str, retrieved_chunks: list[dict]) -> str:
 
 
 def format_chat_history(history: list[dict]) -> str:
-    """Format chat history for context (optional, for multi-turn)."""
-    formatted = []
-    for turn in history[-4:]:  # Last 4 turns for context
-        role = "Student" if turn["role"] == "user" else "Assistant"
-        formatted.append(f"{role}: {turn['content']}")
+    """
+    Format recent chat history for optional multi-turn context injection.
+
+    Args:
+        history: List of {'role': 'user'|'assistant', 'content': str} dicts.
+
+    Returns:
+        Formatted string of the last 4 turns.
+    """
+    if not history:
+        return ""
+
+    formatted: list[str] = []
+    for turn in history[-4:]:  # last 4 turns only
+        if not isinstance(turn, dict):
+            continue
+        role = "Student" if turn.get("role") == "user" else "Assistant"
+        content = str(turn.get("content", "")).strip()
+        if content:
+            formatted.append(f"{role}: {content}")
+
     return "\n".join(formatted)

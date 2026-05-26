@@ -3,18 +3,28 @@ app.py — University Course Assistant
 A RAG-powered Q&A system for students to query their uploaded course materials.
 """
 
+import logging
 import os
 import sys
 import time
+
 import streamlit as st
 import pandas as pd
 
-# ── Environment fixes (Windows: suppress duplicate OpenMP warning) ─────────────
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+# Ensure src/ and experiments/ are importable BEFORE any local imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Ensure src/ and experiments/ are importable
-sys.path.insert(0, os.path.dirname(__file__))
+# ── Load .env + set env vars (must happen before torch/faiss import) ──────────
+from src.config import (
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_LLM,
+    DEFAULT_OVERLAP,
+    DEFAULT_TOP_K,
+    DEFAULT_VECTOR_STORE,
+)
+
+logger = logging.getLogger(__name__)
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -400,7 +410,8 @@ from src.utils import format_score, truncate_text, get_index_key, timestamp
 from experiments.evaluation import evaluate_configurations, DEFAULT_TEST_QUERIES
 
 # ── Session State Init ────────────────────────────────────────────────────────
-def init_session():
+def init_session() -> None:
+    """Initialise all session state keys with safe defaults."""
     defaults = {
         "chat_history": [],
         "vector_store": None,
@@ -411,6 +422,8 @@ def init_session():
         "eval_results": None,
         "indexing_done": False,
         "last_retrieved": [],
+        "index_error": None,     # stores last indexing error message
+        "query_error": None,     # stores last query error message
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -437,48 +450,54 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("**✂️ Chunk Settings**")
+    _chunk_idx = [300, 700].index(DEFAULT_CHUNK_SIZE) if DEFAULT_CHUNK_SIZE in [300, 700] else 0
     chunk_size = st.selectbox(
         "Chunk Size (words)",
         options=[300, 700],
-        index=0,
+        index=_chunk_idx,
         help="Smaller chunks = more precise; Larger = more context",
     )
     overlap = st.slider(
         "Overlap (words)",
         min_value=50,
         max_value=100,
-        value=75,
+        value=min(max(DEFAULT_OVERLAP, 50), 100),
         step=25,
     )
 
     st.markdown("---")
     st.markdown("**🧠 Embedding Model**")
+    _model_keys = list(AVAILABLE_MODELS.keys())
+    _model_idx = _model_keys.index(DEFAULT_EMBEDDING_MODEL) if DEFAULT_EMBEDDING_MODEL in _model_keys else 0
     model_name = st.selectbox(
         "Embedding Model",
-        options=list(AVAILABLE_MODELS.keys()),
-        index=0,
+        options=_model_keys,
+        index=_model_idx,
     )
 
     st.markdown("---")
     st.markdown("**🗄️ Vector Database**")
+    _store_idx = ["FAISS", "ChromaDB"].index(DEFAULT_VECTOR_STORE) if DEFAULT_VECTOR_STORE in ["FAISS", "ChromaDB"] else 0
     store_type = st.selectbox(
         "Vector Store",
         options=["FAISS", "ChromaDB"],
-        index=0,
+        index=_store_idx,
     )
 
     st.markdown("---")
     st.markdown("**🤖 Language Model**")
+    _llm_keys = list(AVAILABLE_LLMS.keys())
+    _llm_idx = _llm_keys.index(DEFAULT_LLM) if DEFAULT_LLM in _llm_keys else 0
     llm_name = st.selectbox(
         "LLM",
-        options=list(AVAILABLE_LLMS.keys()),
-        index=0,
+        options=_llm_keys,
+        index=_llm_idx,
         help="FLAN-T5-Base is fastest; FLAN-T5-Large is more accurate",
     )
 
     st.markdown("---")
     st.markdown("**🔍 Retrieval Settings**")
-    top_k = st.slider("Top-K Results", min_value=2, max_value=10, value=5)
+    top_k = st.slider("Top-K Results", min_value=2, max_value=10, value=min(max(DEFAULT_TOP_K, 2), 10))
     show_chunks = st.toggle("Show Retrieved Chunks", value=False)
 
     st.markdown("---")
@@ -531,12 +550,21 @@ with tab1:
         )
 
         if uploaded_files:
-            saved = []
+            saved, failed = [], []
             for uf in uploaded_files:
-                path = save_uploaded_file(uf)
-                saved.append(uf.name)
+                try:
+                    path = save_uploaded_file(uf)
+                    if path:
+                        saved.append(uf.name)
+                    else:
+                        failed.append(uf.name)
+                except Exception as e:
+                    logger.error("Error saving '%s': %s", uf.name, e)
+                    failed.append(uf.name)
             if saved:
                 st.success(f"✅ Saved {len(saved)} file(s): {', '.join(saved)}")
+            if failed:
+                st.error(f"❌ Failed to save: {', '.join(failed)} — check file integrity or disk space.")
 
         st.markdown("---")
 
@@ -544,41 +572,69 @@ with tab1:
         existing_files = list_uploaded_files()
         if existing_files:
             if st.button("⚡ Build Index", use_container_width=True):
-                with st.spinner("📚 Loading documents..."):
-                    docs = load_all_documents()
-                    st.session_state.docs_loaded = docs
+                st.session_state.index_error = None
+                progress = st.progress(0, text="Loading documents…")
+                try:
+                    with st.spinner("📚 Loading documents..."):
+                        docs = load_all_documents()
+                        if not docs:
+                            st.warning("⚠️ No text could be extracted from the uploaded PDFs. "
+                                       "Ensure they are text-based (not scanned images).")
+                            progress.empty()
+                            st.stop()
+                        st.session_state.docs_loaded = docs
 
-                progress = st.progress(0, text="Chunking documents…")
-                time.sleep(0.3)
+                    progress.progress(10, text="Chunking documents…")
+                    time.sleep(0.2)
 
-                with st.spinner("✂️ Chunking text…"):
-                    chunks = chunk_documents(docs, chunk_size=chunk_size, overlap=overlap)
-                    st.session_state.chunk_list = chunks
-                    stats = get_chunk_stats(chunks)
+                    with st.spinner("✂️ Chunking text…"):
+                        chunks = chunk_documents(docs, chunk_size=chunk_size, overlap=overlap)
+                        st.session_state.chunk_list = chunks
+                        stats = get_chunk_stats(chunks)
 
-                progress.progress(33, text="Generating embeddings…")
+                    if not chunks:
+                        st.warning("⚠️ No chunks produced — try a smaller chunk size or check your PDFs.")
+                        progress.empty()
+                        st.stop()
 
-                with st.spinner(f"🧠 Embedding with {model_name}…"):
-                    texts = [c["text"] for c in chunks]
-                    dim = get_embedding_dim(model_name)
-                    embeddings = embed_texts(texts, model_name=model_name, show_progress=False)
+                    progress.progress(33, text="Generating embeddings…")
 
-                progress.progress(66, text="Building vector index…")
+                    with st.spinner(f"🧠 Embedding with {model_name}…"):
+                        texts = [c["text"] for c in chunks]
+                        dim = get_embedding_dim(model_name)
+                        embeddings = embed_texts(texts, model_name=model_name, show_progress=False)
 
-                with st.spinner(f"🗄️ Indexing into {store_type}…"):
-                    store = create_store(store_type, dim=dim)
-                    store.add(embeddings, chunks)
-                    st.session_state.vector_store = store
-                    st.session_state.index_stats = stats
-                    st.session_state.indexing_done = True
+                    progress.progress(66, text="Building vector index…")
 
-                progress.progress(100, text="Done!")
-                time.sleep(0.5)
-                progress.empty()
+                    with st.spinner(f"🗄️ Indexing into {store_type}…"):
+                        store = create_store(store_type, dim=dim)
+                        store.add(embeddings, chunks)
+                        st.session_state.vector_store = store
+                        st.session_state.index_stats = stats
+                        st.session_state.indexing_done = True
 
-                st.success(
-                    f"🎉 Index built! {stats['total']} chunks from {len(docs)} document(s)"
-                )
+                    progress.progress(100, text="Done!")
+                    time.sleep(0.5)
+                    progress.empty()
+                    st.success(
+                        f"🎉 Index built! {stats['total']} chunks from {len(docs)} document(s)"
+                    )
+
+                except (ImportError, RuntimeError) as e:
+                    progress.empty()
+                    err = str(e)
+                    st.session_state.index_error = err
+                    logger.error("Index build failed: %s", err)
+                    st.error(f"❌ Indexing failed: {err}")
+                except MemoryError:
+                    progress.empty()
+                    msg = "Out of memory. Try using FAISS + MiniLM with 300-word chunks, or upload fewer documents."
+                    st.session_state.index_error = msg
+                    st.error(f"❌ {msg}")
+                except Exception as e:
+                    progress.empty()
+                    logger.exception("Unexpected indexing error.")
+                    st.error(f"❌ Unexpected error: {e}")
         else:
             st.info("👆 Upload at least one PDF to get started.")
 
@@ -605,9 +661,17 @@ with tab1:
                     )
                 with col_del:
                     if st.button("🗑️", key=f"del_{fname}", help=f"Delete {fname}"):
-                        delete_file(fname)
-                        st.session_state.indexing_done = False
-                        st.session_state.vector_store = None
+                        try:
+                            deleted = delete_file(fname)
+                            if deleted:
+                                st.session_state.indexing_done = False
+                                st.session_state.vector_store = None
+                                st.session_state.docs_loaded = {}
+                            else:
+                                st.warning(f"Could not delete '{fname}' — file may already be removed.")
+                        except Exception as e:
+                            logger.error("Error deleting '%s': %s", fname, e)
+                            st.error(f"Failed to delete '{fname}': {e}")
                         st.rerun()
         else:
             st.markdown(
@@ -734,30 +798,38 @@ if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
             # Handle send
             if send and user_query.strip():
                 query = user_query.strip()
-
-                # Append user message
                 st.session_state.chat_history.append(
                     {"role": "user", "content": query, "time": timestamp()}
                 )
-
-                with st.spinner("🔍 Searching documents…"):
-                    retrieved = retrieve(
-                        query,
-                        st.session_state.vector_store,
-                        model_name=model_name,
-                        top_k=top_k,
+                try:
+                    with st.spinner("🔍 Searching documents…"):
+                        retrieved = retrieve(
+                            query,
+                            st.session_state.vector_store,
+                            model_name=model_name,
+                            top_k=top_k,
+                        )
+                    with st.spinner("🤖 Generating answer…"):
+                        prompt = build_prompt(query, retrieved)
+                        answer = generate_answer(
+                            prompt, model_name=llm_name, retrieved_chunks=retrieved
+                        )
+                    st.session_state.last_retrieved = retrieved
+                    st.session_state.chat_history.append(
+                        {"role": "assistant", "content": answer, "time": timestamp()}
                     )
-
-                with st.spinner("🤖 Generating answer…"):
-                    prompt = build_prompt(query, retrieved)
-                    answer = generate_answer(prompt, model_name=llm_name, retrieved_chunks=retrieved)
-
-                # Save retrieved chunks for display
-                st.session_state.last_retrieved = retrieved
-
-                st.session_state.chat_history.append(
-                    {"role": "assistant", "content": answer, "time": timestamp()}
-                )
+                except (RuntimeError, ImportError) as e:
+                    logger.error("Query pipeline error: %s", e)
+                    st.session_state.chat_history.append(
+                        {"role": "assistant", "content": f"⚠️ Error: {e}", "time": timestamp()}
+                    )
+                except Exception as e:
+                    logger.exception("Unexpected query error.")
+                    st.session_state.chat_history.append(
+                        {"role": "assistant",
+                         "content": f"⚠️ Unexpected error: {e}",
+                         "time": timestamp()}
+                    )
                 st.rerun()
 
             # Example prompts
@@ -777,19 +849,29 @@ if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
                         st.session_state.chat_history.append(
                             {"role": "user", "content": prompt_ex, "time": timestamp()}
                         )
-                        with st.spinner("Processing…"):
-                            retrieved = retrieve(
-                                prompt_ex,
-                                st.session_state.vector_store,
-                                model_name=model_name,
-                                top_k=top_k,
+                        try:
+                            with st.spinner("Processing…"):
+                                retrieved = retrieve(
+                                    prompt_ex,
+                                    st.session_state.vector_store,
+                                    model_name=model_name,
+                                    top_k=top_k,
+                                )
+                                prompt_built = build_prompt(prompt_ex, retrieved)
+                                answer = generate_answer(
+                                    prompt_built, model_name=llm_name, retrieved_chunks=retrieved
+                                )
+                            st.session_state.last_retrieved = retrieved
+                            st.session_state.chat_history.append(
+                                {"role": "assistant", "content": answer, "time": timestamp()}
                             )
-                            prompt_built = build_prompt(prompt_ex, retrieved)
-                            answer = generate_answer(prompt_built, model_name=llm_name, retrieved_chunks=retrieved)
-                        st.session_state.last_retrieved = retrieved
-                        st.session_state.chat_history.append(
-                            {"role": "assistant", "content": answer, "time": timestamp()}
-                        )
+                        except Exception as e:
+                            logger.error("Quick prompt error: %s", e)
+                            st.session_state.chat_history.append(
+                                {"role": "assistant",
+                                 "content": f"⚠️ Error processing prompt: {e}",
+                                 "time": timestamp()}
+                            )
                         st.rerun()
 
         with info_col:
@@ -932,15 +1014,16 @@ with tab3:
         if st.button("🚀 Run Evaluation", use_container_width=True):
             if not configs:
                 st.warning("Select at least one option from each setting.")
+            elif not test_queries:
+                st.warning("Add at least one test query before running evaluation.")
             else:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-
                 results_list = []
+
                 for i, cfg in enumerate(configs):
                     label = f"{cfg['model_name']} | {cfg['store_type']} | {cfg['chunk_size']}w"
                     status_text.markdown(f"⏳ Evaluating: **{label}**")
-
                     try:
                         df = evaluate_configurations(
                             docs=docs_for_eval,
@@ -948,10 +1031,17 @@ with tab3:
                             configurations=[cfg],
                             top_k=top_k,
                         )
-                        results_list.append(df)
+                        if not df.empty:
+                            results_list.append(df)
+                    except ValueError as e:
+                        st.error(f"❌ Evaluation config error: {e}")
+                        logger.error("Eval config error for '%s': %s", label, e)
+                    except (RuntimeError, ImportError) as e:
+                        st.warning(f"⚠️ Config failed: **{label}** — {e}")
+                        logger.warning("Eval failed for '%s': %s", label, e)
                     except Exception as e:
-                        st.warning(f"Config failed: {label} — {e}")
-
+                        logger.exception("Unexpected eval error for '%s'.", label)
+                        st.warning(f"⚠️ Unexpected error for **{label}**: {e}")
                     progress_bar.progress((i + 1) / len(configs))
 
                 status_text.markdown("✅ Evaluation complete!")
@@ -962,6 +1052,8 @@ with tab3:
                 if results_list:
                     full_results = pd.concat(results_list, ignore_index=True)
                     st.session_state.eval_results = full_results
+                else:
+                    st.warning("No evaluation results produced — check that documents are indexed and configs are valid.")
 
         # Display results
         if st.session_state.eval_results is not None:
