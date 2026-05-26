@@ -1,0 +1,28 @@
+# ── Core UI ──────────────────────────────────────────
+streamlit==1.32.0
+
+# ── PDF Processing ───────────────────────────────────
+PyMuPDF==1.24.0
+
+# ── Embeddings ───────────────────────────────────────
+sentence-transformers==2.6.1
+
+# ── Vector Databases ─────────────────────────────────
+faiss-cpu==1.8.0
+chromadb==0.4.24
+
+# ── LLM (HuggingFace) ────────────────────────────────
+transformers==4.39.3
+torch==2.2.2
+accelerate==0.28.0
+tokenizers==0.15.2
+huggingface-hub==0.22.2
+
+# ── Data & Visualization ─────────────────────────────
+pandas==2.2.1
+numpy==1.26.4
+plotly==5.20.0
+
+# ── Utilities ────────────────────────────────────────
+tqdm==4.66.2
+nltk==3.8.1
