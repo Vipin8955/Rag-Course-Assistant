@@ -650,11 +650,18 @@ with tab1:
             for fname in existing_files:
                 col_f, col_del = st.columns([4, 1])
                 with col_f:
+                    # Show green dot only if index is actually built in this session
+                    is_indexed = st.session_state.indexing_done and bool(st.session_state.vector_store)
+                    dot_color = "#56d364" if is_indexed else "#f85149"
+                    dot_label = "●" 
+                    status_text = ""
+                    if not is_indexed:
+                        status_text = ' <span style="font-size:0.72rem;color:#f85149;margin-left:6px;">[Not Indexed — click ⚡ Build Index]</span>'
                     st.markdown(
                         f"""
 <div class="file-item">
-    <span class="dot-green">●</span>
-    <span>{fname}</span>
+    <span style="color:{dot_color}">{dot_label}</span>
+    <span>{fname}</span>{status_text}
 </div>
 """,
                         unsafe_allow_html=True,
@@ -832,17 +839,66 @@ if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
                     )
                 st.rerun()
 
-            # Example prompts
+            # Dynamic quick prompts based on indexed content
             st.markdown("**💡 Quick Prompts**")
             qp_cols = st.columns(3)
-            example_prompts = [
-                "Explain Unit 1",
-                "What is Machine Learning?",
-                "Summarise Chapter 2",
-                "List the assignments",
-                "What are the prerequisites?",
-                "Explain key concepts",
-            ]
+
+            def _generate_quick_prompts() -> list[str]:
+                """Generate contextual quick prompts based on what's indexed."""
+                chunks = st.session_state.get("chunk_list", [])
+                docs = st.session_state.get("docs_loaded", {})
+                filenames = list(docs.keys()) if docs else list_uploaded_files()
+
+                # Detect document type from filenames and content
+                all_text = " ".join(filenames).lower()
+                if chunks:
+                    all_text += " " + " ".join(c.get("text", "")[:200] for c in chunks[:3]).lower()
+
+                is_resume = any(w in all_text for w in ["cgpa", "internship", "bachelor", "b.tech", "experience", "skills", "resume", "linkedin", "github", "education"])
+                is_course = any(w in all_text for w in ["lecture", "chapter", "unit", "assignment", "syllabus", "exam", "course", "module", "marks"])
+                is_research = any(w in all_text for w in ["abstract", "introduction", "methodology", "conclusion", "references", "figure", "table", "paper"])
+
+                if is_resume:
+                    fname = filenames[0] if filenames else "the document"
+                    return [
+                        "What is the person's name?",
+                        "What is their CGPA or GPA?",
+                        "What programming languages do they know?",
+                        "Where do they study or work?",
+                        "What projects have they built?",
+                        "What internships have they done?",
+                    ]
+                elif is_research:
+                    return [
+                        "What is the main contribution of this paper?",
+                        "What methodology was used?",
+                        "What were the key findings?",
+                        "What datasets were used?",
+                        "What are the limitations?",
+                        "What future work is suggested?",
+                    ]
+                elif is_course:
+                    return [
+                        "What topics are covered?",
+                        "Explain the key concepts",
+                        "What are the learning objectives?",
+                        "List the assignments or exams",
+                        "Summarise Unit 1",
+                        "What are the prerequisites?",
+                    ]
+                else:
+                    # Generic fallback
+                    fname = filenames[0].replace(".pdf", "") if filenames else "the document"
+                    return [
+                        f"What is this document about?",
+                        "What are the main topics covered?",
+                        "Summarise the key points",
+                        "What are the important details?",
+                        "List the main sections",
+                        "What conclusions are drawn?",
+                    ]
+
+            example_prompts = _generate_quick_prompts()
             for i, prompt_ex in enumerate(example_prompts):
                 with qp_cols[i % 3]:
                     if st.button(prompt_ex, key=f"qp_{i}", use_container_width=True, type="secondary"):
