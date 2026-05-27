@@ -64,8 +64,10 @@ def _load_pipeline(model_name: str):
             "text2text-generation",
             model=model,
             tokenizer=tokenizer,
-            max_new_tokens=512,
+            max_new_tokens=256,
             do_sample=False,
+            repetition_penalty=1.3,       # prevents 'a. s. m. n. m. n...' looping
+            no_repeat_ngram_size=3,        # blocks repeated 3-word sequences
         )
         _current_model = model_name
         logger.info("LLM '%s' loaded successfully.", model_name)
