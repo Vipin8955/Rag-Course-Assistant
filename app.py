@@ -424,6 +424,8 @@ def init_session() -> None:
         "last_retrieved": [],
         "index_error": None,     # stores last indexing error message
         "query_error": None,     # stores last query error message
+        "index_model": None,     # embedding model used when index was built
+        "index_store": None,     # vector store type used when index was built
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -612,6 +614,8 @@ with tab1:
                         st.session_state.vector_store = store
                         st.session_state.index_stats = stats
                         st.session_state.indexing_done = True
+                        st.session_state.index_model = model_name    # remember which model built this index
+                        st.session_state.index_store = store_type    # remember which store type
 
                     progress.progress(100, text="Done!")
                     time.sleep(0.5)
@@ -729,6 +733,41 @@ with tab2:
             unsafe_allow_html=True,
         )
     else:
+        # ── Model / Store mismatch check ──────────────────────────────────────
+        _idx_model = st.session_state.get("index_model")
+        _idx_store = st.session_state.get("index_store")
+        _model_mismatch = _idx_model and (_idx_model != model_name)
+        _store_mismatch = _idx_store and (_idx_store != store_type)
+        _has_mismatch = _model_mismatch or _store_mismatch
+
+        if _has_mismatch:
+            mismatch_lines = []
+            if _model_mismatch:
+                mismatch_lines.append(
+                    f"Embedding model changed: index built with <b>{_idx_model}</b>, "
+                    f"sidebar now set to <b>{model_name}</b>"
+                )
+            if _store_mismatch:
+                mismatch_lines.append(
+                    f"Vector store changed: index built with <b>{_idx_store}</b>, "
+                    f"sidebar now set to <b>{store_type}</b>"
+                )
+            mismatch_detail = "<br>".join(mismatch_lines)
+            st.markdown(
+                f"""
+<div style="background:#3a2a00;border:1px solid #d29922;border-radius:10px;
+            padding:1rem 1.4rem;margin-bottom:1rem;">
+    <p style="margin:0;font-weight:700;color:#d29922;font-size:0.95rem;">
+        ⚠️ Settings changed — index is stale
+    </p>
+    <p style="margin:0.4rem 0 0;color:#c9a54a;font-size:0.85rem;">{mismatch_detail}</p>
+    <p style="margin:0.6rem 0 0;color:#c9d1d9;font-size:0.85rem;">
+        Go to <b>📄 Upload Documents</b> tab and click <b>⚡ Build Index</b>
+        to rebuild with the new settings before asking questions.
+    </p>
+</div>""",
+                unsafe_allow_html=True,
+            )
         chat_col, info_col = st.columns([1.6, 1], gap="large")
 
         with chat_col:
@@ -802,42 +841,45 @@ if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
                     st.session_state.chat_history = []
                     st.rerun()
 
-            # Handle send
+            # Handle send — block if settings have changed since index was built
             if send and user_query.strip():
-                query = user_query.strip()
-                st.session_state.chat_history.append(
-                    {"role": "user", "content": query, "time": timestamp()}
-                )
-                try:
-                    with st.spinner("🔍 Searching documents…"):
-                        retrieved = retrieve(
-                            query,
-                            st.session_state.vector_store,
-                            model_name=model_name,
-                            top_k=top_k,
+                if _has_mismatch:
+                    st.warning("⚠️ Rebuild the index first — your embedding model or vector store has changed.")
+                else:
+                    query = user_query.strip()
+                    st.session_state.chat_history.append(
+                        {"role": "user", "content": query, "time": timestamp()}
+                    )
+                    try:
+                        with st.spinner("🔍 Searching documents…"):
+                            retrieved = retrieve(
+                                query,
+                                st.session_state.vector_store,
+                                model_name=model_name,
+                                top_k=top_k,
+                            )
+                        with st.spinner("🤖 Generating answer…"):
+                            prompt = build_prompt(query, retrieved)
+                            answer = generate_answer(
+                                prompt, model_name=llm_name, retrieved_chunks=retrieved
+                            )
+                        st.session_state.last_retrieved = retrieved
+                        st.session_state.chat_history.append(
+                            {"role": "assistant", "content": answer, "time": timestamp()}
                         )
-                    with st.spinner("🤖 Generating answer…"):
-                        prompt = build_prompt(query, retrieved)
-                        answer = generate_answer(
-                            prompt, model_name=llm_name, retrieved_chunks=retrieved
+                    except (RuntimeError, ImportError) as e:
+                        logger.error("Query pipeline error: %s", e)
+                        st.session_state.chat_history.append(
+                            {"role": "assistant", "content": f"⚠️ Error: {e}", "time": timestamp()}
                         )
-                    st.session_state.last_retrieved = retrieved
-                    st.session_state.chat_history.append(
-                        {"role": "assistant", "content": answer, "time": timestamp()}
-                    )
-                except (RuntimeError, ImportError) as e:
-                    logger.error("Query pipeline error: %s", e)
-                    st.session_state.chat_history.append(
-                        {"role": "assistant", "content": f"⚠️ Error: {e}", "time": timestamp()}
-                    )
-                except Exception as e:
-                    logger.exception("Unexpected query error.")
-                    st.session_state.chat_history.append(
-                        {"role": "assistant",
-                         "content": f"⚠️ Unexpected error: {e}",
-                         "time": timestamp()}
-                    )
-                st.rerun()
+                    except Exception as e:
+                        logger.exception("Unexpected query error.")
+                        st.session_state.chat_history.append(
+                            {"role": "assistant",
+                             "content": f"⚠️ Unexpected error: {e}",
+                             "time": timestamp()}
+                        )
+                    st.rerun()
 
             # Dynamic quick prompts based on indexed content
             st.markdown("**💡 Quick Prompts**")
@@ -901,7 +943,8 @@ if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
             example_prompts = _generate_quick_prompts()
             for i, prompt_ex in enumerate(example_prompts):
                 with qp_cols[i % 3]:
-                    if st.button(prompt_ex, key=f"qp_{i}", use_container_width=True, type="secondary"):
+                    if st.button(prompt_ex, key=f"qp_{i}", use_container_width=True,
+                                 type="secondary", disabled=_has_mismatch):
                         st.session_state.chat_history.append(
                             {"role": "user", "content": prompt_ex, "time": timestamp()}
                         )
