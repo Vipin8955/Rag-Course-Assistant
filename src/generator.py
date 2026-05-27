@@ -66,7 +66,7 @@ def _load_pipeline(model_name: str):
             tokenizer=tokenizer,
             max_new_tokens=256,
             do_sample=False,
-            repetition_penalty=1.3,       # prevents 'a. s. m. n. m. n...' looping
+            repetition_penalty=1.1,       # gentle penalty — stops runaway loops without cutting sentences short
             no_repeat_ngram_size=3,        # blocks repeated 3-word sequences
         )
         _current_model = model_name
@@ -140,8 +140,8 @@ def generate_answer(
         output = pipe(truncated_prompt, max_new_tokens=max_tokens)
         answer = output[0]["generated_text"].strip()
 
-        if not answer or len(answer) < 5:
-            logger.warning("LLM returned very short/empty answer — using fallback.")
+        if not answer or len(answer) < 2:
+            logger.warning("LLM returned empty answer — using fallback.")
             return NOT_FOUND_MSG
 
         logger.debug("generate_answer: %d chars generated.", len(answer))
