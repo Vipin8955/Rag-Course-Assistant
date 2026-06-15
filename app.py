@@ -409,6 +409,22 @@ from src.generator import generate_answer, AVAILABLE_LLMS, DEFAULT_LLM
 from src.utils import format_score, truncate_text, get_index_key, timestamp
 from experiments.evaluation import evaluate_configurations, DEFAULT_TEST_QUERIES
 
+# ── Pre-warm embedding model at startup ─────────────────────────────────────────
+# @st.cache_resource runs ONCE per server process and keeps the model in RAM.
+# This avoids a 30-60s timeout when the user first clicks "Build Index".
+@st.cache_resource(show_spinner="⏳ Loading embedding model (first start only)...")
+def _load_default_embedding_model():
+    """Pre-load the default embedding model so it's ready before any user action."""
+    try:
+        from src.embeddings import get_model
+        from src.config import DEFAULT_EMBEDDING_MODEL
+        model = get_model(DEFAULT_EMBEDDING_MODEL)
+        return model
+    except Exception:
+        return None   # Non-fatal — will retry when user clicks Build Index
+
+_load_default_embedding_model()   # Triggers on every page load; cached after first call
+
 # ── Session State Init ────────────────────────────────────────────────────────
 def init_session() -> None:
     """Initialise all session state keys with safe defaults."""
