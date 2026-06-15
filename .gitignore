@@ -19,6 +19,7 @@ dist/
 
 # ── Data — Uploaded PDFs (user-specific, potentially large/private) ───────────
 data/*.pdf
+*.pdf
 
 # ── ChromaDB persistent store (auto-generated, large binary files) ────────────
 data/chroma_db/
@@ -29,6 +30,9 @@ data/chroma_db/
 
 # ── Streamlit config / cache ──────────────────────────────────────────────────
 .streamlit/
+
+# ── Pytest / test scratch files ───────────────────────────────────────────────
+scratch/
 
 # ── IDE / Editor ──────────────────────────────────────────────────────────────
 .vscode/
