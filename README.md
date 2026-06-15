@@ -27,7 +27,6 @@ Upload your course PDFs · Ask anything · Get answers strictly grounded in your
 - [Quick Start](#-quick-start)
 - [Configuration (.env)](#-configuration-env)
 - [Usage Guide](#-usage-guide)
-- [Deploy to Render](#-deploy-to-render)
 - [Configuration Options](#-configuration-options)
 - [Troubleshooting](#-troubleshooting)
 - [Design Decisions](#-key-design-decisions)
@@ -299,41 +298,6 @@ If you change the **Embedding Model** or **Vector Store** in the sidebar after b
 - **Disable** the Send button and Quick Prompts until you rebuild
 
 To fix: go back to Tab 1 and click **⚡ Build Index** again.
-
----
-
-## ☁️ Deploy to Render
-
-This project includes a ready-to-use `render.yaml` for [Render.com](https://render.com) deployment.
-
-### Steps
-
-```
-1. Push to GitHub:   git push origin master
-2. Go to:            render.com → New → Blueprint
-3. Connect your GitHub repository
-4. Render auto-detects render.yaml and configures everything
-5. Click Apply — done!
-```
-
-### Render Requirements
-
-| Plan | RAM | Suitable? |
-|---|---|---|
-| Free | 512 MB | ❌ Too low for FLAN-T5 |
-| Starter ($7/mo) | 512 MB | ❌ Too low for FLAN-T5 |
-| **Standard ($25/mo)** | **2 GB** | ✅ Recommended |
-
-> **Note:** Uploaded PDFs and the FAISS index are stored in `/tmp` on Render — they are lost on restart. The app shows a clear warning about this in cloud mode. For persistent storage, add a Render Disk.
-
-### Environment Variables (pre-configured in render.yaml)
-
-| Variable | Value | Purpose |
-|---|---|---|
-| `HF_HOME` | `/tmp/hf_cache` | HuggingFace model cache |
-| `DATA_DIR` | `/tmp/rag_uploads` | PDF upload directory |
-| `CHROMA_DIR` | `/tmp/rag_uploads/chroma_db` | ChromaDB store |
-| `TOKENIZERS_PARALLELISM` | `false` | Avoid fork warnings |
 
 ---
 
