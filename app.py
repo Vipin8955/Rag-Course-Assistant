@@ -544,6 +544,15 @@ with tab1:
             unsafe_allow_html=True,
         )
 
+        # Show ephemeral storage notice when running on Render or any cloud host
+        import os as _os
+        if _os.getenv("RENDER") or _os.getenv("DATA_DIR", "").startswith("/tmp"):
+            st.info(
+                "☁️ **Cloud mode** — uploaded files are stored temporarily and will be lost "
+                "when the server restarts. Re-upload your PDFs and rebuild the index each session.",
+                icon="ℹ️",
+            )
+
         uploaded_files = st.file_uploader(
             "Drop PDFs here",
             type=["pdf"],

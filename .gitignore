@@ -29,7 +29,8 @@ data/chroma_db/
 .cache/
 
 # ── Streamlit config / cache ──────────────────────────────────────────────────
-.streamlit/
+# Track config.toml (server settings for Render) but NOT the secrets file
+.streamlit/secrets.toml
 
 # ── Pytest / test scratch files ───────────────────────────────────────────────
 scratch/

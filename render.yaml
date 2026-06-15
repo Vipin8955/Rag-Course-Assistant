@@ -1,0 +1,57 @@
+services:
+  - type: web
+    name: rag-course-assistant
+    runtime: python
+    # Use Python 3.11 — matches local dev environment
+    pythonVersion: "3.11"
+
+    # Build: install all deps (torch CPU-only is ~800MB, expect 5-10 min build)
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+
+    # Start: bind to Render's dynamic port on all interfaces
+    startCommand: "streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true"
+
+    # ── Environment Variables ──────────────────────────────────────────────────
+    envVars:
+      # Python
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+      # HuggingFace — cache models in /tmp so they survive within a session
+      # (models are re-downloaded fresh on each new deploy/restart)
+      - key: HF_HOME
+        value: /tmp/hf_cache
+      - key: TRANSFORMERS_CACHE
+        value: /tmp/hf_cache/transformers
+      - key: SENTENCE_TRANSFORMERS_HOME
+        value: /tmp/hf_cache/sentence_transformers
+      - key: HF_HUB_DISABLE_SYMLINKS_WARNING
+        value: "1"
+
+      # Tokenizer — disable parallelism to avoid fork warnings on Linux
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
+
+      # Data directory — stored in /tmp on Render (ephemeral per-session)
+      - key: DATA_DIR
+        value: /tmp/rag_uploads
+      - key: CHROMA_DIR
+        value: /tmp/rag_uploads/chroma_db
+
+      # App defaults
+      - key: DEFAULT_CHUNK_SIZE
+        value: "300"
+      - key: DEFAULT_OVERLAP
+        value: "75"
+      - key: DEFAULT_EMBEDDING_MODEL
+        value: "all-MiniLM-L6-v2"
+      - key: DEFAULT_VECTOR_STORE
+        value: "FAISS"
+      - key: DEFAULT_LLM
+        value: "FLAN-T5-Base (Fast)"
+      - key: DEFAULT_TOP_K
+        value: "5"
+
+      # HuggingFace token (optional — add in Render dashboard for private models)
+      # - key: HF_TOKEN
+      #   value: hf_your_token_here

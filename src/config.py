@@ -58,10 +58,23 @@ DEFAULT_TOP_K: int = _get_int("DEFAULT_TOP_K", 5)
 # ── HuggingFace (optional) ────────────────────────────────────────────────────
 HF_TOKEN: str | None = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
 
-# ── Windows / Runtime Fixes ───────────────────────────────────────────────────
-# Set before torch/faiss are imported to avoid duplicate OpenMP library warning.
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", os.getenv("KMP_DUPLICATE_LIB_OK", "TRUE"))
+# ── Runtime / Platform Fixes ─────────────────────────────────────────────────
+import platform as _platform
+
+# KMP_DUPLICATE_LIB_OK is a Windows-only OpenMP fix — skip on Linux (e.g. Render)
+if _platform.system() == "Windows":
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", os.getenv("KMP_DUPLICATE_LIB_OK", "TRUE"))
+
 os.environ.setdefault("TOKENIZERS_PARALLELISM", os.getenv("TOKENIZERS_PARALLELISM", "false"))
+
+# HuggingFace cache — if HF_HOME is set (e.g. /tmp/hf_cache on Render) use it;
+# otherwise fall back to the default ~/.cache/huggingface
+_hf_home = os.getenv("HF_HOME")
+if _hf_home:
+    os.environ.setdefault("HF_HOME", _hf_home)
+    os.environ.setdefault("TRANSFORMERS_CACHE", os.getenv("TRANSFORMERS_CACHE", f"{_hf_home}/transformers"))
+    os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", os.getenv("SENTENCE_TRANSFORMERS_HOME", f"{_hf_home}/sentence_transformers"))
+    Path(_hf_home).mkdir(parents=True, exist_ok=True)
 
 if logger.isEnabledFor(logging.DEBUG):
     logger.debug(

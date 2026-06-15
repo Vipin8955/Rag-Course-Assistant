@@ -1,0 +1,20 @@
+[server]
+# Bind to all interfaces — required for Render / any cloud host
+address = "0.0.0.0"
+headless = true
+
+# Port is set via $PORT env var in startCommand — this is the fallback
+port = 8501
+
+# Disable CORS — safe for a deployed public app
+enableCORS = false
+
+# Disable XSRF for Render's reverse proxy
+enableXsrfProtection = false
+
+[browser]
+# Don't try to open a browser on the server
+gatherUsageStats = false
+
+[logger]
+level = "info"
