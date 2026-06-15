@@ -373,16 +373,4 @@ To fix: go back to Tab 1 and click **⚡ Build Index** again.
 
 ---
 
-## 📄 License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
-
----
-
-<div align="center">
-
-Built with ❤️ using **Streamlit · HuggingFace · FAISS · ChromaDB · PyMuPDF**
-
-*100% offline · 100% private · Answers strictly grounded in your uploaded documents*
-
-</div>
