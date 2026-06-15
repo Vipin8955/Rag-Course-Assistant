@@ -2,7 +2,7 @@
 
 # 🎓 University Course Assistant
 
-**A production-ready Retrieval-Augmented Generation (RAG) system for students.**  
+**A Retrieval-Augmented Generation (RAG) system for students.**  
 Upload your course PDFs · Ask anything · Get answers strictly grounded in your documents.
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python&logoColor=white)](https://python.org)
