@@ -548,8 +548,8 @@ with tab1:
         import os as _os
         if _os.getenv("RENDER") or _os.getenv("DATA_DIR", "").startswith("/tmp"):
             st.info(
-                "☁️ **Cloud mode** — uploaded files are stored temporarily and will be lost "
-                "when the server restarts. Re-upload your PDFs and rebuild the index each session.",
+                "☁️ **Cloud mode** — each session is private and isolated. "
+                "Re-upload your PDFs and rebuild the index each session.",
                 icon="ℹ️",
             )
 
@@ -561,33 +561,54 @@ with tab1:
         )
 
         if uploaded_files:
+            # ── In-memory processing: extract text directly from bytes ──────
+            # Never write to shared disk — each session is fully isolated
+            import fitz as _fitz
             saved, failed = [], []
+            if "session_docs" not in st.session_state:
+                st.session_state.session_docs = {}
             for uf in uploaded_files:
                 try:
-                    path = save_uploaded_file(uf)
-                    if path:
+                    raw_bytes = uf.getvalue()
+                    pdf_doc = _fitz.open(stream=raw_bytes, filetype="pdf")
+                    pages_text = []
+                    for page in pdf_doc:
+                        t = page.get_text("text")
+                        if t:
+                            pages_text.append(t)
+                    pdf_doc.close()
+                    if pages_text:
+                        from src.ingestion import clean_text as _clean
+                        st.session_state.session_docs[uf.name] = _clean("\n".join(pages_text))
                         saved.append(uf.name)
                     else:
                         failed.append(uf.name)
                 except Exception as e:
-                    logger.error("Error saving '%s': %s", uf.name, e)
+                    logger.error("Error processing '%s': %s", uf.name, e)
                     failed.append(uf.name)
             if saved:
                 st.success(f"✅ Saved {len(saved)} file(s): {', '.join(saved)}")
             if failed:
-                st.error(f"❌ Failed to save: {', '.join(failed)} — check file integrity or disk space.")
+                st.error(f"❌ Could not extract text from: {', '.join(failed)} — ensure they are text-based PDFs, not scanned images.")
 
         st.markdown("---")
 
-        # Build Index Button
-        existing_files = list_uploaded_files()
+        # Build Index Button — use in-memory session docs (cloud) or disk docs (local)
+        session_docs = st.session_state.get("session_docs", {})
+        disk_files   = list_uploaded_files()
+        existing_files = list(session_docs.keys()) if session_docs else disk_files
+
         if existing_files:
             if st.button("⚡ Build Index", use_container_width=True):
                 st.session_state.index_error = None
                 progress = st.progress(0, text="Loading documents…")
                 try:
                     with st.spinner("📚 Loading documents..."):
-                        docs = load_all_documents()
+                        # Use in-memory session docs if available, else fall back to disk
+                        if session_docs:
+                            docs = session_docs
+                        else:
+                            docs = load_all_documents()
                         if not docs:
                             st.warning("⚠️ No text could be extracted from the uploaded PDFs. "
                                        "Ensure they are text-based (not scanned images).")
@@ -658,22 +679,22 @@ with tab1:
             unsafe_allow_html=True,
         )
 
-        existing_files = list_uploaded_files()
+        # Show files from session (in-memory) or disk as fallback
+        _session_docs = st.session_state.get("session_docs", {})
+        existing_files = list(_session_docs.keys()) if _session_docs else list_uploaded_files()
         if existing_files:
             for fname in existing_files:
                 col_f, col_del = st.columns([4, 1])
                 with col_f:
-                    # Show green dot only if index is actually built in this session
                     is_indexed = st.session_state.indexing_done and bool(st.session_state.vector_store)
                     dot_color = "#56d364" if is_indexed else "#f85149"
-                    dot_label = "●" 
                     status_text = ""
                     if not is_indexed:
                         status_text = ' <span style="font-size:0.72rem;color:#f85149;margin-left:6px;">[Not Indexed — click ⚡ Build Index]</span>'
                     st.markdown(
                         f"""
 <div class="file-item">
-    <span style="color:{dot_color}">{dot_label}</span>
+    <span style="color:{dot_color}">●</span>
     <span>{fname}</span>{status_text}
 </div>
 """,
@@ -682,13 +703,14 @@ with tab1:
                 with col_del:
                     if st.button("🗑️", key=f"del_{fname}", help=f"Delete {fname}"):
                         try:
-                            deleted = delete_file(fname)
-                            if deleted:
-                                st.session_state.indexing_done = False
-                                st.session_state.vector_store = None
-                                st.session_state.docs_loaded = {}
+                            # Remove from session memory (works on cloud + local)
+                            if fname in st.session_state.get("session_docs", {}):
+                                del st.session_state.session_docs[fname]
                             else:
-                                st.warning(f"Could not delete '{fname}' — file may already be removed.")
+                                delete_file(fname)   # fallback for local disk
+                            st.session_state.indexing_done = False
+                            st.session_state.vector_store = None
+                            st.session_state.docs_loaded = {}
                         except Exception as e:
                             logger.error("Error deleting '%s': %s", fname, e)
                             st.error(f"Failed to delete '{fname}': {e}")
