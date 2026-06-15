@@ -9,7 +9,6 @@ Upload your course PDFs · Ask anything · Get answers strictly grounded in your
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.32-red?logo=streamlit&logoColor=white)](https://streamlit.io)
 [![HuggingFace](https://img.shields.io/badge/HuggingFace-Transformers-yellow?logo=huggingface&logoColor=white)](https://huggingface.co)
 [![FAISS](https://img.shields.io/badge/Facebook-FAISS-blue?logo=meta&logoColor=white)](https://github.com/facebookresearch/faiss)
-[![License](https://img.shields.io/badge/License-MIT-green?logoColor=white)](LICENSE)
 [![Render](https://img.shields.io/badge/Deploy-Render-46E3B7?logo=render&logoColor=white)](https://render.com)
 
 </div>
